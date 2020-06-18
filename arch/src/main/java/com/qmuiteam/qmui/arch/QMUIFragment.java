@@ -26,7 +26,6 @@ import android.view.KeyEvent;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
-import android.view.ViewParent;
 import android.view.animation.AlphaAnimation;
 import android.view.animation.Animation;
 import android.view.animation.AnimationUtils;
@@ -45,10 +44,12 @@ import androidx.fragment.app.FragmentManager;
 import androidx.fragment.app.FragmentTransaction;
 import androidx.lifecycle.Lifecycle;
 import androidx.lifecycle.LifecycleOwner;
+import androidx.lifecycle.LiveData;
+import androidx.lifecycle.MediatorLiveData;
+import androidx.lifecycle.MutableLiveData;
+import androidx.lifecycle.Observer;
 import androidx.lifecycle.ViewModelProvider;
 import androidx.lifecycle.ViewModelStoreOwner;
-import androidx.viewpager.widget.ViewPager;
-import androidx.viewpager2.widget.ViewPager2;
 
 import com.qmuiteam.qmui.QMUIConfig;
 import com.qmuiteam.qmui.QMUILog;
@@ -90,7 +91,10 @@ import static com.qmuiteam.qmui.arch.SwipeBackLayout.EDGE_TOP;
  * Created by cgspine on 15/9/14.
  */
 public abstract class QMUIFragment extends Fragment implements
-        QMUIFragmentLazyLifecycleOwner.Callback, LatestVisitArgumentCollector, FragmentSchemeRefreshable {
+        QMUIFragmentLazyLifecycleOwner.Callback,
+        LatestVisitArgumentCollector,
+        FragmentSchemeRefreshable,
+        SwipeBackLayout.OnKeyboardInsetHandler{
     static final String SWIPE_BACK_VIEW = "swipe_back_view";
     private static final String TAG = QMUIFragment.class.getSimpleName();
 
@@ -129,6 +133,7 @@ public abstract class QMUIFragment extends Fragment implements
     private boolean mIsInSwipeBack = false;
 
     private int mEnterAnimationStatus = ANIMATION_ENTER_STATUS_NOT_START;
+    private MutableLiveData<Boolean> isInEnterAnimationLiveData = new MutableLiveData<>(false);
     private boolean mCalled = true;
     private ArrayList<Runnable> mDelayRenderRunnableList;
     private ArrayList<Runnable> mPostResumeRunnableList;
@@ -209,9 +214,17 @@ public abstract class QMUIFragment extends Fragment implements
     @Override
     public void onResume() {
         checkLatestVisitRecord();
+        checkForRequestForHandlePopBack();
         super.onResume();
         if (mBaseView != null && mPostResumeRunnableList != null && !mPostResumeRunnableList.isEmpty()) {
             mBaseView.post(mCheckPostResumeRunnable);
+        }
+    }
+
+    protected void checkForRequestForHandlePopBack(){
+        QMUIFragmentContainerProvider provider = findFragmentContainerProvider();
+        if(provider != null){
+            provider.requestForHandlePopBack(false);
         }
     }
 
@@ -351,6 +364,7 @@ public abstract class QMUIFragment extends Fragment implements
                 .setCustomAnimations(
                         transitionConfig.enter, transitionConfig.exit,
                         transitionConfig.popenter, transitionConfig.popout)
+                .setPrimaryNavigationFragment(null)
                 .replace(provider.getContextViewId(), fragment, tagName);
         int index = transaction.commit();
         Utils.modifyOpForStartFragmentAndDestroyCurrent(fragmentManager, fragment, useNewTransitionConfigWhenPop, transitionConfig);
@@ -420,6 +434,7 @@ public abstract class QMUIFragment extends Fragment implements
         String tagName = fragment.getClass().getSimpleName();
         return provider.getContainerFragmentManager()
                 .beginTransaction()
+                .setPrimaryNavigationFragment(null)
                 .setCustomAnimations(transitionConfig.enter, transitionConfig.exit, transitionConfig.popenter, transitionConfig.popout)
                 .replace(provider.getContextViewId(), fragment, tagName)
                 .addToBackStack(tagName)
@@ -473,53 +488,22 @@ public abstract class QMUIFragment extends Fragment implements
                 new SwipeBackLayout.Callback() {
                     @Override
                     public int getDragDirection(SwipeBackLayout swipeBackLayout, SwipeBackLayout.ViewMoveAction viewMoveAction, float downX, float downY, float dx, float dy, float touchSlop) {
-                        // 1. can not swipe back if in animation
-                        if (mEnterAnimationStatus != ANIMATION_ENTER_STATUS_END) {
-                            return SwipeBackLayout.DRAG_DIRECTION_NONE;
+
+                        mCalled = false;
+                        boolean canHandle = canHandleSwipeBack();
+                        if (!mCalled) {
+                            throw new RuntimeException(getClass().getSimpleName() + " did not call through to super.shouldPreventSwipeBack()");
                         }
 
-                        // 2. can not swipe back if it is not managed by FragmentContainer
-                        QMUIFragmentContainerProvider provider = findFragmentContainerProvider();
-                        if (provider == null) {
-                            return SwipeBackLayout.DRAG_DIRECTION_NONE;
+                        if(!canHandle){
+                            return DRAG_DIRECTION_NONE;
                         }
-
-                        FragmentManager fragmentManager = provider.getContainerFragmentManager();
-                        if (fragmentManager == null || fragmentManager != getParentFragmentManager()) {
-                            return SwipeBackLayout.DRAG_DIRECTION_NONE;
-                        }
-
-                        // 3. need be handled by inner FragmentContainer
-                        if (fragmentManager.getPrimaryNavigationFragment() != null) {
-                            return SwipeBackLayout.DRAG_DIRECTION_NONE;
-                        }
-
-                        // 4. can not swipe back if the view is null
-                        View view = getView();
-                        if (view == null) {
-                            return SwipeBackLayout.DRAG_DIRECTION_NONE;
-                        }
-
-                        // 5. can not swipe back if if the Fragment is in ViewPager
-                        ViewParent parent = view.getParent();
-                        while (parent != null) {
-                            if (parent instanceof ViewPager || parent instanceof ViewPager2) {
-                                return SwipeBackLayout.DRAG_DIRECTION_NONE;
-                            }
-                            parent = parent.getParent();
-                        }
-
-                        // 6. can not swipe back if the backStack entry count is less than 2
-                        if (fragmentManager.getBackStackEntryCount() <= 1 &&
-                                !QMUISwipeBackActivityManager.getInstance().canSwipeBack()) {
-                            return SwipeBackLayout.DRAG_DIRECTION_NONE;
-                        }
-
                         return QMUIFragment.this.getDragDirection(
                                 swipeBackLayout, viewMoveAction, downX, downY, dx, dy, touchSlop);
                     }
                 });
         mListenerRemover = swipeBackLayout.addSwipeListener(mSwipeListener);
+        swipeBackLayout.setOnKeyboardInsetHandler(this);
         if (isCreateForSwipeBack) {
             swipeBackLayout.setTag(R.id.fragment_container_view_tag, this);
         }
@@ -623,11 +607,11 @@ public abstract class QMUIFragment extends Fragment implements
                 View view = container.getChildAt(i);
                 Object tag = view.getTag(R.id.qmui_arch_swipe_layout_in_back);
                 if (SWIPE_BACK_VIEW.equals(tag)) {
-                    SwipeBackLayout.offsetInSwipeBack(view, moveEdge, targetOffset);
+                    SwipeBackLayout.translateInSwipeBack(view, moveEdge, targetOffset);
                 }
             }
             if (mSwipeBackgroundView != null) {
-                SwipeBackLayout.offsetInSwipeBack(mSwipeBackgroundView, moveEdge, targetOffset);
+                SwipeBackLayout.translateInSwipeBack(mSwipeBackgroundView, moveEdge, targetOffset);
             }
         }
 
@@ -657,13 +641,6 @@ public abstract class QMUIFragment extends Fragment implements
                             cmdField.setAccessible(true);
                             int cmd = (int) cmdField.get(op);
                             if (cmd == 3) {
-                                Field popEnterAnimField = Utils.getOpPopEnterAnimField(op);
-                                if (popEnterAnimField != null) {
-                                    popEnterAnimField.setAccessible(true);
-                                    popEnterAnimField.set(op, 0);
-                                }
-
-
                                 Field fragmentField = Utils.getOpFragmentField(op);
                                 if (fragmentField != null) {
                                     fragmentField.setAccessible(true);
@@ -676,7 +653,7 @@ public abstract class QMUIFragment extends Fragment implements
                                         if (baseView != null) {
                                             addViewInSwipeBack(container, baseView, 0);
                                             handleChildFragmentListWhenSwipeBackStart(mModifiedFragment, baseView);
-                                            SwipeBackLayout.offsetInSwipeBack(baseView, moveEdge,
+                                            SwipeBackLayout.translateInSwipeBack(baseView, moveEdge,
                                                     Math.abs(backViewInitOffset(baseView.getContext(), dragDirection, moveEdge)));
                                         }
                                     }
@@ -712,7 +689,7 @@ public abstract class QMUIFragment extends Fragment implements
                                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
                     }
                     mSwipeBackgroundView.bind(prevActivity, currentActivity, restoreSubWindowWhenDragBack());
-                    SwipeBackLayout.offsetInSwipeBack(mSwipeBackgroundView, moveEdge,
+                    SwipeBackLayout.translateInSwipeBack(mSwipeBackgroundView, moveEdge,
                             Math.abs(backViewInitOffset(decorView.getContext(), dragDirection, moveEdge)));
                 }
             }
@@ -744,6 +721,8 @@ public abstract class QMUIFragment extends Fragment implements
                         if (onRemove != null) {
                             onRemove.apply(view);
                         }
+                        view.setTranslationY(0);
+                        view.setTranslationX(0);
                         parent.removeView(view);
                     }
                 }
@@ -893,10 +872,11 @@ public abstract class QMUIFragment extends Fragment implements
             bubbleBackPressedEvent();
             return;
         }
+
         Activity activity = requireActivity();
         if (activity instanceof QMUIFragmentContainerProvider) {
             QMUIFragmentContainerProvider provider = (QMUIFragmentContainerProvider) activity;
-            if (provider.getContainerFragmentManager().getBackStackEntryCount() > 1) {
+            if (provider.getContainerFragmentManager().getBackStackEntryCount() > 1 || provider.getContainerFragmentManager().getPrimaryNavigationFragment() == this) {
                 bubbleBackPressedEvent();
             } else {
                 QMUIFragment.TransitionConfig transitionConfig = onFetchTransitionConfig();
@@ -1052,7 +1032,7 @@ public abstract class QMUIFragment extends Fragment implements
                 animation.setAnimationListener(new Animation.AnimationListener() {
                     @Override
                     public void onAnimationStart(Animation animation) {
-                        onEnterAnimationStart(animation);
+                        checkAndCallOnEnterAnimationStart(animation);
                     }
 
                     @Override
@@ -1066,19 +1046,26 @@ public abstract class QMUIFragment extends Fragment implements
                     }
                 });
             } else {
-                onEnterAnimationStart(null);
+                checkAndCallOnEnterAnimationStart(null);
                 checkAndCallOnEnterAnimationEnd(null);
             }
         }
         return animation;
     }
 
+    private void checkAndCallOnEnterAnimationStart(@Nullable Animation animation) {
+        mCalled = false;
+        onEnterAnimationStart(animation);
+        if (!mCalled) {
+            throw new RuntimeException(getClass().getSimpleName() + " did not call through to super.onEnterAnimationStart(Animation)");
+        }
+    }
 
     private void checkAndCallOnEnterAnimationEnd(@Nullable Animation animation) {
         mCalled = false;
         onEnterAnimationEnd(animation);
         if (!mCalled) {
-            throw new RuntimeException("QMUIFragment " + this + " did not call through to super.onEnterAnimationEnd(Animation)");
+            throw new RuntimeException(getClass().getSimpleName() + " did not call through to super.onEnterAnimationEnd(Animation)");
         }
     }
 
@@ -1192,6 +1179,44 @@ public abstract class QMUIFragment extends Fragment implements
         return SwipeBackLayout.MOVE_VIEW_AUTO;
     }
 
+    protected boolean canHandleSwipeBack(){
+        mCalled = true;
+        // 1. can not swipe back if enter animation is not finished
+        if (mEnterAnimationStatus != ANIMATION_ENTER_STATUS_END) {
+            return false;
+        }
+
+        QMUIFragmentContainerProvider provider = findFragmentContainerProvider();
+        if (provider == null) {
+            return false;
+        }
+        FragmentManager fragmentManager = provider.getContainerFragmentManager();
+
+        // 3. is not managed by QMUIFragmentContainerProvider
+        if (fragmentManager == null || fragmentManager != getParentFragmentManager()) {
+            return false;
+        }
+
+        // 4. should handle by child
+        if(provider.isChildHandlePopBackRequested()){
+            return false;
+        }
+
+        // 5. can not swipe back if the view is null
+        View view = getView();
+        if (view == null) {
+            return false;
+        }
+
+        // 6. can not swipe back if the backStack entry count is less than 2
+        if (fragmentManager.getBackStackEntryCount() <= 1 &&
+                !QMUISwipeBackActivityManager.getInstance().canSwipeBack()) {
+            return false;
+        }
+
+        return true;
+    }
+
     protected int getDragDirection(@NonNull SwipeBackLayout swipeBackLayout,
                                    @NonNull SwipeBackLayout.ViewMoveAction viewMoveAction,
                                    float downX, float downY, float dx, float dy, float slopTouch) {
@@ -1274,7 +1299,12 @@ public abstract class QMUIFragment extends Fragment implements
     }
 
     protected void onEnterAnimationStart(@Nullable Animation animation) {
+        if (mCalled) {
+            throw new IllegalAccessError("don't call #onEnterAnimationStart() directly");
+        }
+        mCalled = true;
         mEnterAnimationStatus = ANIMATION_ENTER_STATUS_STARTED;
+        isInEnterAnimationLiveData.setValue(true);
     }
 
     protected void onEnterAnimationEnd(@Nullable Animation animation) {
@@ -1283,6 +1313,7 @@ public abstract class QMUIFragment extends Fragment implements
         }
         mCalled = true;
         mEnterAnimationStatus = ANIMATION_ENTER_STATUS_END;
+        isInEnterAnimationLiveData.setValue(false);
         if (mDelayRenderRunnableList != null) {
             ArrayList<Runnable> list = mDelayRenderRunnableList;
             mDelayRenderRunnableList = null;
@@ -1292,6 +1323,40 @@ public abstract class QMUIFragment extends Fragment implements
                 }
             }
         }
+    }
+
+    public LiveData<Boolean> getIsInEnterAnimationLiveData() {
+        return isInEnterAnimationLiveData;
+    }
+
+    protected <T> LiveData<T> enterAnimationAvoidTransform(final LiveData<T> origin){
+        return enterAnimationAvoidTransform(origin, isInEnterAnimationLiveData);
+    }
+
+    protected <T> LiveData<T> enterAnimationAvoidTransform(final LiveData<T> origin, LiveData<Boolean> enterAnimationLiveData){
+        final MediatorLiveData<T> result = new MediatorLiveData<T>();
+        result.addSource(enterAnimationLiveData, new Observer<Boolean>(){
+
+            boolean isAdded = false;
+            @Override
+            public void onChanged(Boolean isInEnterAnimation) {
+                if(isInEnterAnimation){
+                    isAdded = false;
+                    result.removeSource(origin);
+                }else {
+                    if(!isAdded){
+                        isAdded = true;
+                        result.addSource(origin, new Observer<T>() {
+                            @Override
+                            public void onChanged(T t) {
+                                result.setValue(t);
+                            }
+                        });
+                    }
+                }
+            }
+        });
+        return result;
     }
 
     @Override
@@ -1344,6 +1409,11 @@ public abstract class QMUIFragment extends Fragment implements
             parentFragment = parentFragment.getParentFragment();
         }
         return true;
+    }
+
+    @Override
+    public boolean handleKeyboardInset(int inset) {
+        return false;
     }
 
     @Override
