@@ -14,23 +14,25 @@
  * limitations under the License.
  */
 
-package com.qmuiteam.qmui.arch.scheme;
+package com.qmuiteam.qmui.type.parser;
 
-import android.app.Activity;
-import android.content.Intent;
+import android.graphics.drawable.Drawable;
 
-import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
-import java.util.Map;
+public interface EmojiResourceProvider {
 
-public interface QMUISchemeIntentFactory {
-    Intent factory(@NonNull Activity activity,
-                   @NonNull Class<? extends Activity> activityClass,
-                   @Nullable Map<String, SchemeValue> scheme,
-                   @NonNull String origin);
+    @Nullable
+    Drawable queryForDrawable(CharSequence text);
 
-    boolean shouldBlockJump(@NonNull Activity activity,
-                            @NonNull Class<? extends Activity> activityClass,
-                            @Nullable Map<String, SchemeValue> scheme);
+    @Nullable
+    Drawable queryForDrawable(char c);
+
+    @Nullable
+    Drawable queryForDrawable(int codePoint);
+
+    @Nullable
+    Drawable queryForDrawable(int firstCodePoint, int secondCodePint);
+
+
 }

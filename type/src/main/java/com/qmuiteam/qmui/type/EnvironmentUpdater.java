@@ -14,23 +14,8 @@
  * limitations under the License.
  */
 
-package com.qmuiteam.qmui.arch.scheme;
+package com.qmuiteam.qmui.type;
 
-import android.app.Activity;
-import android.content.Intent;
-
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
-
-import java.util.Map;
-
-public interface QMUISchemeIntentFactory {
-    Intent factory(@NonNull Activity activity,
-                   @NonNull Class<? extends Activity> activityClass,
-                   @Nullable Map<String, SchemeValue> scheme,
-                   @NonNull String origin);
-
-    boolean shouldBlockJump(@NonNull Activity activity,
-                            @NonNull Class<? extends Activity> activityClass,
-                            @Nullable Map<String, SchemeValue> scheme);
+public interface EnvironmentUpdater {
+    void update(TypeEnvironment env);
 }
