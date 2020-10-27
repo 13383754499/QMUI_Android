@@ -36,7 +36,6 @@ import androidx.activity.OnBackPressedDispatcher;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.arch.core.util.Function;
-import androidx.core.view.ViewCompat;
 import androidx.fragment.app.Fragment;
 import androidx.fragment.app.FragmentActivity;
 import androidx.fragment.app.FragmentContainerView;
@@ -91,7 +90,6 @@ import static com.qmuiteam.qmui.arch.SwipeBackLayout.EDGE_TOP;
  * Created by cgspine on 15/9/14.
  */
 public abstract class QMUIFragment extends Fragment implements
-        QMUIFragmentLazyLifecycleOwner.Callback,
         LatestVisitArgumentCollector,
         FragmentSchemeRefreshable,
         SwipeBackLayout.OnKeyboardInsetHandler{
@@ -125,7 +123,6 @@ public abstract class QMUIFragment extends Fragment implements
     private int mTargetRequestCode = NO_REQUEST_CODE;
 
     private View mBaseView;
-    private SwipeBackLayout mCacheSwipeBackLayout;
     private View mCacheRootView;
     private boolean isCreateForSwipeBack = false;
     private SwipeBackLayout.ListenerRemover mListenerRemover;
@@ -151,7 +148,6 @@ public abstract class QMUIFragment extends Fragment implements
             }
         }
     };
-    private QMUIFragmentLazyLifecycleOwner mLazyViewLifecycleOwner;
     private QMUIFragmentEffectRegistry mFragmentEffectRegistry;
 
     private OnBackPressedDispatcher mOnBackPressedDispatcher;
@@ -207,6 +203,13 @@ public abstract class QMUIFragment extends Fragment implements
     @Override
     public void onDestroyView() {
         super.onDestroyView();
+        if (mListenerRemover != null) {
+            mListenerRemover.remove();
+            mListenerRemover = null;
+        }
+        if(mCacheRootView != null && mCacheRootView.getParent() instanceof ViewGroup){
+            ((ViewGroup) mCacheRootView.getParent()).removeView(mCacheRootView);
+        }
         mBaseView = null;
         mEnterAnimationStatus = ANIMATION_ENTER_STATUS_NOT_START;
     }
@@ -228,11 +231,18 @@ public abstract class QMUIFragment extends Fragment implements
         }
     }
 
+    protected boolean shouldCheckLatestVisitRecord(){
+        return getParentFragment() == null || (getParentFragment() instanceof QMUINavFragment);
+    }
+
     protected boolean shouldPerformLatestVisitRecord() {
         return true;
     }
 
     private void checkLatestVisitRecord() {
+        if(!shouldCheckLatestVisitRecord()){
+            return;
+        }
 
         Activity activity = getActivity();
         if (!(activity instanceof QMUIFragmentActivity)) {
@@ -461,10 +471,8 @@ public abstract class QMUIFragment extends Fragment implements
         super.onViewCreated(view, savedInstanceState);
         if (mBaseView.getTag(R.id.qmui_arch_reused_layout) == null) {
             onViewCreated(mBaseView);
+            mBaseView.setTag(R.id.qmui_arch_reused_layout, true);
         }
-        mLazyViewLifecycleOwner = new QMUIFragmentLazyLifecycleOwner(this);
-        mLazyViewLifecycleOwner.setViewVisible(getUserVisibleHint());
-        getViewLifecycleOwner().getLifecycle().addObserver(mLazyViewLifecycleOwner);
     }
 
     private SwipeBackLayout newSwipeBackLayout() {
@@ -476,14 +484,13 @@ public abstract class QMUIFragment extends Fragment implements
             if (rootView.getParent() != null) {
                 ((ViewGroup) rootView.getParent()).removeView(rootView);
             }
-            rootView.setTag(R.id.qmui_arch_reused_layout, true);
         }
         if (translucentFull()) {
             rootView.setFitsSystemWindows(false);
         } else {
             rootView.setFitsSystemWindows(true);
         }
-        final SwipeBackLayout swipeBackLayout = SwipeBackLayout.wrap(rootView,
+        SwipeBackLayout swipeBackLayout = SwipeBackLayout.wrap(rootView,
                 dragViewMoveAction(),
                 new SwipeBackLayout.Callback() {
                     @Override
@@ -502,6 +509,9 @@ public abstract class QMUIFragment extends Fragment implements
                                 swipeBackLayout, viewMoveAction, downX, downY, dx, dy, touchSlop);
                     }
                 });
+        if(mListenerRemover != null){
+            mListenerRemover.remove();
+        }
         mListenerRemover = swipeBackLayout.addSwipeListener(mSwipeListener);
         swipeBackLayout.setOnKeyboardInsetHandler(this);
         if (isCreateForSwipeBack) {
@@ -809,51 +819,22 @@ public abstract class QMUIFragment extends Fragment implements
         }
     };
 
-    private boolean canNotUseCacheViewInCreateView() {
-        return mCacheSwipeBackLayout.getParent() != null || ViewCompat.isAttachedToWindow(mCacheSwipeBackLayout);
-    }
-
     public boolean isInSwipeBack() {
         return mIsInSwipeBack;
     }
 
     @Override
     public View onCreateView(@NonNull LayoutInflater inflater, ViewGroup container, Bundle savedInstanceState) {
-        SwipeBackLayout swipeBackLayout;
-        if (mCacheSwipeBackLayout == null) {
-            swipeBackLayout = newSwipeBackLayout();
-            mCacheSwipeBackLayout = swipeBackLayout;
-        } else {
-            if (canNotUseCacheViewInCreateView()) {
-                // try removeView first
-                container.removeView(mCacheSwipeBackLayout);
-            }
-
-            if (canNotUseCacheViewInCreateView()) {
-                // give up!!!
-                Log.i(TAG, "can not use cache swipeBackLayout, this may happen " +
-                        "if invoke popBackStack duration fragment transition");
-                mCacheSwipeBackLayout.clearSwipeListeners();
-                swipeBackLayout = newSwipeBackLayout();
-                mCacheSwipeBackLayout = swipeBackLayout;
-            } else {
-                swipeBackLayout = mCacheSwipeBackLayout;
-                mCacheRootView.setTag(R.id.qmui_arch_reused_layout, true);
-            }
-        }
-
-
+        SwipeBackLayout swipeBackLayout = newSwipeBackLayout();
         if (!isCreateForSwipeBack) {
             mBaseView = swipeBackLayout.getContentView();
             swipeBackLayout.setTag(R.id.qmui_arch_swipe_layout_in_back, null);
         }
 
         swipeBackLayout.setFitsSystemWindows(false);
-
         if (getActivity() != null) {
             QMUIViewHelper.requestApplyInsets(getActivity().getWindow());
         }
-
         return swipeBackLayout;
     }
 
@@ -1362,9 +1343,6 @@ public abstract class QMUIFragment extends Fragment implements
     @Override
     public void onDestroy() {
         super.onDestroy();
-        if (mListenerRemover != null) {
-            mListenerRemover.remove();
-        }
         if (mSwipeBackgroundView != null) {
             mSwipeBackgroundView.unBind();
             mSwipeBackgroundView = null;
@@ -1372,21 +1350,9 @@ public abstract class QMUIFragment extends Fragment implements
 
         // help gc, sometimes user may hold fragment instance in somewhere,
         // then these objects can not be released in time.
-        mCacheSwipeBackLayout = null;
         mCacheRootView = null;
         mDelayRenderRunnableList = null;
         mCheckPostResumeRunnable = null;
-    }
-
-    @Override
-    public void setUserVisibleHint(boolean isVisibleToUser) {
-        super.setUserVisibleHint(isVisibleToUser);
-        notifyFragmentVisibleToUserChanged(isParentVisibleToUser() && isVisibleToUser);
-    }
-
-    @Override
-    public boolean isVisibleToUser() {
-        return getUserVisibleHint() && isParentVisibleToUser();
     }
 
     public boolean onKeyDown(int keyCode, KeyEvent event) {
@@ -1419,29 +1385,6 @@ public abstract class QMUIFragment extends Fragment implements
     @Override
     public void refreshFromScheme(@Nullable Bundle bundle) {
 
-    }
-
-    private void notifyFragmentVisibleToUserChanged(boolean isVisibleToUser) {
-        if (mLazyViewLifecycleOwner != null) {
-            mLazyViewLifecycleOwner.setViewVisible(isVisibleToUser);
-        }
-        if (isAdded()) {
-            List<Fragment> childFragments = getChildFragmentManager().getFragments();
-            for (Fragment fragment : childFragments) {
-                if (fragment instanceof QMUIFragment) {
-                    ((QMUIFragment) fragment).notifyFragmentVisibleToUserChanged(
-                            isVisibleToUser && fragment.getUserVisibleHint());
-                }
-            }
-        }
-    }
-
-    public LifecycleOwner getLazyViewLifecycleOwner() {
-        if (mLazyViewLifecycleOwner == null) {
-            throw new IllegalStateException("Can't access the QMUIFragment View's LifecycleOwner when "
-                    + "getView() is null i.e., before onViewCreated() or after onDestroyView()");
-        }
-        return mLazyViewLifecycleOwner;
     }
 
     /**
