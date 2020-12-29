@@ -16,23 +16,14 @@
 
 package com.qmuiteam.qmui.arch.scheme;
 
-import android.app.Activity;
-import android.content.Intent;
-
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import java.util.Map;
 
-public interface QMUISchemeIntentFactory {
-    Intent factory(@NonNull Activity activity,
-                   @NonNull Class<? extends Activity> activityClass,
-                   @Nullable Map<String, SchemeValue> scheme,
-                   @NonNull String origin);
-
-    void startActivity(@NonNull Activity activity, @NonNull Intent intent);
-
-    boolean shouldBlockJump(@NonNull Activity activity,
-                            @NonNull Class<? extends Activity> activityClass,
-                            @Nullable Map<String, SchemeValue> scheme);
+public class QMUIDefaultSchemeValueConverter implements QMUISchemeValueConverter {
+    @Override
+    public @NonNull String convert(@NonNull String key, @NonNull String originValue, @Nullable Map<String, String> schemeParams) {
+        return originValue;
+    }
 }
