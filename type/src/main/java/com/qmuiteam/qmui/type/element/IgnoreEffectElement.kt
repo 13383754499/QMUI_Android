@@ -13,19 +13,29 @@
  * either express or implied. See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package com.qmuiteam.qmui.type.element
 
-package com.qmuiteam.qmui.arch.scheme;
+import android.graphics.Canvas
+import com.qmuiteam.qmui.type.EnvironmentUpdater
+import com.qmuiteam.qmui.type.TypeEnvironment
 
-import android.app.Activity;
+class IgnoreEffectElement(list: List<Element>) : Element("", -1, -1) {
 
-import androidx.annotation.NonNull;
+    init {
+        addEnvironmentUpdater(object: EnvironmentUpdater {
+            override fun update(env: TypeEnvironment) {
+                for (element in list) {
+                    element.move(env)
+                }
+            }
 
-import java.util.Map;
+        })
+    }
 
-public interface QMUISchemeHandleInterpolator {
-    boolean intercept(@NonNull QMUISchemeHandler schemeHandler,
-                      @NonNull Activity activity,
-                      @NonNull String action,
-                      @NonNull Map<String, String> params,
-                      @NonNull String origin);
+    override fun onMeasure(env: TypeEnvironment) {
+        setMeasureDimen(0f, 0f, 0f)
+    }
+
+    override fun onDraw(env: TypeEnvironment, canvas: Canvas) {}
+
 }

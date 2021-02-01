@@ -13,19 +13,10 @@
  * either express or implied. See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package com.qmuiteam.qmui.type.element
 
-package com.qmuiteam.qmui.arch.scheme;
-
-import android.app.Activity;
-
-import androidx.annotation.NonNull;
-
-import java.util.Map;
-
-public interface QMUISchemeHandleInterpolator {
-    boolean intercept(@NonNull QMUISchemeHandler schemeHandler,
-                      @NonNull Activity activity,
-                      @NonNull String action,
-                      @NonNull Map<String, String> params,
-                      @NonNull String origin);
+class BreakWordLineElement : TextElement("-", -1, -1) {
+    init {
+        wordPart = WORD_PART_MIDDLE
+    }
 }
