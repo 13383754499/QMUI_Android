@@ -16,20 +16,20 @@
 
 package com.qmuiteam.qmui.arch;
 
+import android.animation.Animator;
+import android.animation.AnimatorInflater;
+import android.animation.AnimatorListenerAdapter;
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
-import android.os.Build;
 import android.os.Bundle;
 import android.util.Log;
 import android.view.KeyEvent;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
-import android.view.animation.AlphaAnimation;
 import android.view.animation.Animation;
-import android.view.animation.AnimationUtils;
 import android.widget.FrameLayout;
 
 import androidx.activity.OnBackPressedCallback;
@@ -37,6 +37,7 @@ import androidx.activity.OnBackPressedDispatcher;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.arch.core.util.Function;
+import androidx.core.view.WindowInsetsCompat;
 import androidx.fragment.app.Fragment;
 import androidx.fragment.app.FragmentActivity;
 import androidx.fragment.app.FragmentContainerView;
@@ -66,7 +67,6 @@ import com.qmuiteam.qmui.arch.scheme.FragmentSchemeRefreshable;
 import com.qmuiteam.qmui.arch.scheme.QMUISchemeHandler;
 import com.qmuiteam.qmui.util.QMUIDisplayHelper;
 import com.qmuiteam.qmui.util.QMUIKeyboardHelper;
-import com.qmuiteam.qmui.util.QMUIViewHelper;
 import com.qmuiteam.qmui.widget.QMUITopBar;
 
 import java.lang.reflect.Field;
@@ -92,18 +92,21 @@ import static com.qmuiteam.qmui.arch.SwipeBackLayout.EDGE_TOP;
  */
 public abstract class QMUIFragment extends Fragment implements
         LatestVisitArgumentCollector,
-        FragmentSchemeRefreshable,
-        SwipeBackLayout.OnKeyboardInsetHandler{
+        FragmentSchemeRefreshable{
     static final String SWIPE_BACK_VIEW = "swipe_back_view";
     private static final String TAG = QMUIFragment.class.getSimpleName();
 
     public static final TransitionConfig SLIDE_TRANSITION_CONFIG = new TransitionConfig(
-            R.anim.slide_in_right, R.anim.slide_out_left,
-            R.anim.slide_in_left, R.anim.slide_out_right);
+            R.animator.slide_in_right, R.animator.slide_out_left,
+            R.animator.slide_in_left, R.animator.slide_out_right,
+            R.anim.slide_in_left, R.anim.slide_out_right
+    );
 
     public static final TransitionConfig SCALE_TRANSITION_CONFIG = new TransitionConfig(
-            R.anim.scale_enter, R.anim.slide_still,
-            R.anim.slide_still, R.anim.scale_exit);
+            R.animator.scale_enter, R.animator.slide_still,
+            R.animator.slide_still, R.animator.scale_exit,
+            R.anim.slide_still, R.anim.scale_exit
+    );
 
 
     public static final int RESULT_CANCELED = Activity.RESULT_CANCELED;
@@ -218,6 +221,10 @@ public abstract class QMUIFragment extends Fragment implements
 
     @Override
     public void onResume() {
+        if(mEnterAnimationStatus != ANIMATION_ENTER_STATUS_END){
+            mEnterAnimationStatus = ANIMATION_ENTER_STATUS_END;
+            notifyDelayRenderRunnableList();
+        }
         checkLatestVisitRecord();
         checkForRequestForHandlePopBack();
         super.onResume();
@@ -496,11 +503,6 @@ public abstract class QMUIFragment extends Fragment implements
                 ((ViewGroup) rootView.getParent()).removeView(rootView);
             }
         }
-        if (translucentFull()) {
-            rootView.setFitsSystemWindows(false);
-        } else {
-            rootView.setFitsSystemWindows(true);
-        }
         SwipeBackLayout swipeBackLayout = SwipeBackLayout.wrap(rootView,
                 dragViewMoveAction(),
                 new SwipeBackLayout.Callback() {
@@ -532,7 +534,12 @@ public abstract class QMUIFragment extends Fragment implements
             mListenerRemover.remove();
         }
         mListenerRemover = swipeBackLayout.addSwipeListener(mSwipeListener);
-        swipeBackLayout.setOnKeyboardInsetHandler(this);
+        swipeBackLayout.setOnInsetsHandler(new SwipeBackLayout.OnInsetsHandler() {
+            @Override
+            public int getInsetsType() {
+                return getRootViewInsetsType();
+            }
+        });
         if (isCreateForSwipeBack) {
             swipeBackLayout.setTag(R.id.fragment_container_view_tag, this);
         }
@@ -852,12 +859,8 @@ public abstract class QMUIFragment extends Fragment implements
         }
 
         swipeBackLayout.setFitsSystemWindows(false);
-        if (getActivity() != null) {
-            QMUIViewHelper.requestApplyInsets(getActivity().getWindow());
-        }
         return swipeBackLayout;
     }
-
 
     private void bubbleBackPressedEvent() {
         // disable this and go with FragmentManager's backPressesCallback
@@ -882,12 +885,12 @@ public abstract class QMUIFragment extends Fragment implements
             } else {
                 QMUIFragment.TransitionConfig transitionConfig = onFetchTransitionConfig();
                 if (needInterceptLastFragmentFinish()) {
-                    if(Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP && !sPopBackWhenSwipeFinished){
+                    if(!sPopBackWhenSwipeFinished){
                         activity.finishAfterTransition();
                     }else{
                         activity.finish();
                     }
-                    activity.overridePendingTransition(transitionConfig.popenter, transitionConfig.popout);
+                    activity.overridePendingTransition(transitionConfig.popenterAnimation, transitionConfig.popoutAnimation);
                     return;
                 }
                 Object toExec = onLastFragmentFinish();
@@ -898,18 +901,18 @@ public abstract class QMUIFragment extends Fragment implements
                     } else if (toExec instanceof Intent) {
                         Intent intent = (Intent) toExec;
                         startActivity(intent);
-                        activity.overridePendingTransition(transitionConfig.popenter, transitionConfig.popout);
+                        activity.overridePendingTransition(transitionConfig.popenterAnimation, transitionConfig.popoutAnimation);
                         activity.finish();
                     } else {
                         onHandleSpecLastFragmentFinish(activity, transitionConfig, toExec);
                     }
                 } else {
-                    if(Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP && !sPopBackWhenSwipeFinished){
+                    if(!sPopBackWhenSwipeFinished){
                         activity.finishAfterTransition();
                     }else{
                         activity.finish();
                     }
-                    activity.overridePendingTransition(transitionConfig.popenter, transitionConfig.popout);
+                    activity.overridePendingTransition(transitionConfig.popenterAnimation, transitionConfig.popoutAnimation);
                 }
             }
         } else {
@@ -929,7 +932,7 @@ public abstract class QMUIFragment extends Fragment implements
                                                   QMUIFragment.TransitionConfig transitionConfig,
                                                   Object toExec) {
         fragmentActivity.finish();
-        fragmentActivity.overridePendingTransition(transitionConfig.popenter, transitionConfig.popout);
+        fragmentActivity.overridePendingTransition(transitionConfig.popenterAnimation, transitionConfig.popoutAnimation);
     }
 
     /**
@@ -1010,59 +1013,35 @@ public abstract class QMUIFragment extends Fragment implements
         return true;
     }
 
+    @Nullable
     @Override
-    public Animation onCreateAnimation(int transit, boolean enter, int nextAnim) {
-        if (!enter) {
-            // This is a workaround for the bug where child value disappear when
-            // the parent is removed (as all children are first removed from the parent)
-            // See https://code.google.com/p/android/issues/detail?id=55228
-            Fragment rootParentFragment = null;
-            Fragment parentFragment = getParentFragment();
-            while (parentFragment != null) {
-                rootParentFragment = parentFragment;
-                parentFragment = parentFragment.getParentFragment();
-            }
-            if (rootParentFragment != null && rootParentFragment.isRemoving()) {
-                Animation doNothingAnim = new AlphaAnimation(1, 1);
-                int duration = getResources().getInteger(R.integer.qmui_anim_duration);
-                doNothingAnim.setDuration(duration);
-                return doNothingAnim;
-            }
-
-        }
-        Animation animation = null;
-        if (enter) {
-            try {
-                animation = AnimationUtils.loadAnimation(getContext(), nextAnim);
-            } catch (Throwable ignored) {
-
-            }
-            if (animation != null) {
-                animation.setAnimationListener(new Animation.AnimationListener() {
-                    @Override
-                    public void onAnimationStart(Animation animation) {
-                        checkAndCallOnEnterAnimationStart(animation);
-                    }
-
-                    @Override
-                    public void onAnimationEnd(Animation animation) {
-                        checkAndCallOnEnterAnimationEnd(animation);
-                    }
-
-                    @Override
-                    public void onAnimationRepeat(Animation animation) {
-
-                    }
-                });
-            } else {
-                checkAndCallOnEnterAnimationStart(null);
-                checkAndCallOnEnterAnimationEnd(null);
-            }
-        }
-        return animation;
+    public final Animation onCreateAnimation(int transit, boolean enter, int nextAnim) {
+        return null;
     }
 
-    private void checkAndCallOnEnterAnimationStart(@Nullable Animation animation) {
+    @Nullable
+    @Override
+    public Animator onCreateAnimator(int transit, boolean enter, int nextAnim) {
+        if(enter && nextAnim != 0){
+            Animator animator = AnimatorInflater.loadAnimator(getContext(), nextAnim);
+            animator.addListener(new AnimatorListenerAdapter() {
+
+                @Override
+                public void onAnimationStart(Animator animation) {
+                    checkAndCallOnEnterAnimationStart(animation);
+                }
+
+                @Override
+                public void onAnimationEnd(Animator animation) {
+                    checkAndCallOnEnterAnimationEnd(animation);
+                }
+            });
+            return animator;
+        }
+        return super.onCreateAnimator(transit, enter, nextAnim);
+    }
+
+    private void checkAndCallOnEnterAnimationStart(@Nullable Animator animation) {
         mCalled = false;
         onEnterAnimationStart(animation);
         if (!mCalled) {
@@ -1070,14 +1049,13 @@ public abstract class QMUIFragment extends Fragment implements
         }
     }
 
-    private void checkAndCallOnEnterAnimationEnd(@Nullable Animation animation) {
+    private void checkAndCallOnEnterAnimationEnd(@Nullable Animator animation) {
         mCalled = false;
         onEnterAnimationEnd(animation);
         if (!mCalled) {
             throw new RuntimeException(getClass().getSimpleName() + " did not call through to super.onEnterAnimationEnd(Animation)");
         }
     }
-
 
     /**
      * onCreateView
@@ -1307,7 +1285,11 @@ public abstract class QMUIFragment extends Fragment implements
         }
     }
 
-    protected void onEnterAnimationStart(@Nullable Animation animation) {
+    /**
+     * may not be call.
+     * @param animation
+     */
+    protected void onEnterAnimationStart(@Nullable Animator animation) {
         if (mCalled) {
             throw new IllegalAccessError("don't call #onEnterAnimationStart() directly");
         }
@@ -1316,13 +1298,21 @@ public abstract class QMUIFragment extends Fragment implements
         isInEnterAnimationLiveData.setValue(true);
     }
 
-    protected void onEnterAnimationEnd(@Nullable Animation animation) {
+    /**
+     * may not be call.
+     * @param animation
+     */
+    protected void onEnterAnimationEnd(@Nullable Animator animation) {
         if (mCalled) {
             throw new IllegalAccessError("don't call #onEnterAnimationEnd() directly");
         }
         mCalled = true;
         mEnterAnimationStatus = ANIMATION_ENTER_STATUS_END;
         isInEnterAnimationLiveData.setValue(false);
+        notifyDelayRenderRunnableList();
+    }
+
+    private void notifyDelayRenderRunnableList(){
         if (mDelayRenderRunnableList != null) {
             ArrayList<Runnable> list = mDelayRenderRunnableList;
             mDelayRenderRunnableList = null;
@@ -1391,42 +1381,15 @@ public abstract class QMUIFragment extends Fragment implements
         return false;
     }
 
-    /**
-     * @return true if parentFragments is visible to user
-     */
-    private boolean isParentVisibleToUser() {
-        Fragment parentFragment = getParentFragment();
-        while (parentFragment != null) {
-            if (!parentFragment.getUserVisibleHint()) {
-                return false;
-            }
-            parentFragment = parentFragment.getParentFragment();
-        }
-        return true;
-    }
 
-    @Override
-    public boolean handleKeyboardInset(int inset) {
-        return false;
-    }
-
-    @Override
-    public boolean interceptSelfKeyboardInset() {
-        return false;
+    @WindowInsetsCompat.Type.InsetsType
+    public int getRootViewInsetsType() {
+        return getParentFragment() == null ? WindowInsetsCompat.Type.ime() : 0;
     }
 
     @Override
     public void refreshFromScheme(@Nullable Bundle bundle) {
 
-    }
-
-    /**
-     * Immersive processing
-     *
-     * @return if true, the area under status bar belongs to content; otherwise it belongs to padding
-     */
-    protected boolean translucentFull() {
-        return false;
     }
 
     /**
@@ -1477,16 +1440,22 @@ public abstract class QMUIFragment extends Fragment implements
         public final int exit;
         public final int popenter;
         public final int popout;
+        public final int popenterAnimation;
+        public final int popoutAnimation;
 
-        public TransitionConfig(int enter, int popout) {
-            this(enter, 0, 0, popout);
-        }
-
-        public TransitionConfig(int enter, int exit, int popenter, int popout) {
+        public TransitionConfig(
+                int enter, int exit,
+                int popenter, int popout,
+                int popenterAnimation, int popoutAnimation
+        ) {
             this.enter = enter;
             this.exit = exit;
             this.popenter = popenter;
             this.popout = popout;
+
+            // only use for pop activity if only one fragment exist.
+            this.popenterAnimation = popenterAnimation;
+            this.popoutAnimation = popoutAnimation;
         }
     }
 }
