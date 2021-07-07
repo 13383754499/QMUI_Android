@@ -35,14 +35,10 @@ class LineLayout {
     var moreUnderlineHeight = 0
     var typeModel: TypeModel? = null
 
-
     private val mLines: MutableList<Line> = ArrayList()
-
 
     var totalLineCount = 0
         private set
-
-
 
     fun measureAndLayout(env: TypeEnvironment) {
         env.clear()
@@ -61,6 +57,7 @@ class LineLayout {
                 line.layout(env, dropLastIfSpace, false)
                 mLines.add(line)
                 if (canInterrupt()) {
+                    handleEllipse(env,true)
                     return
                 }
                 y += (line.contentHeight + env.paragraphSpace).coerceAtLeast(env.lineHeight)
@@ -113,7 +110,7 @@ class LineLayout {
     }
 
     private fun handleEllipse(env: TypeEnvironment, fromInterrupt: Boolean) {
-        if (mLines.isEmpty() || mLines.size < maxLines || mLines.size == maxLines && !fromInterrupt) {
+        if (mLines.isEmpty() || mLines.size < maxLines || (mLines.size == maxLines && !fromInterrupt)) {
             return
         }
         if (ellipsize == TruncateAt.END) {
@@ -188,6 +185,9 @@ class LineLayout {
             lastLine.add(moreElement)
         }
         lastLine.layout(env, dropLastIfSpace, true)
+        if (moreElement != null) {
+            moreElement.x = lastLine.widthLimit - moreElement.measureWidth
+        }
     }
 
     private fun handleEllipseStart(env: TypeEnvironment) {
